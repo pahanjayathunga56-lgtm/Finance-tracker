@@ -309,6 +309,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   tickFormatter={(val) => `${currencySymbol}${val}`}
                 />
                 <Tooltip
+                  cursor={false}
                   content={({ active, payload, label }) => {
                     if (active && payload && payload.length) {
                       return (
