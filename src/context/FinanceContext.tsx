@@ -16,6 +16,7 @@ import type {
 } from '../types/finance'
 import {
   clearSupabaseCredentials,
+  deleteReceiptFromCloud,
   getSupabase,
   isSupabaseReady,
   rowToSubscription,
@@ -519,10 +520,36 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }
 
   const updateTransaction = async (updatedTx: Transaction) => {
+    const oldTx = transactions.find((t) => t.id === updatedTx.id)
     const normalizedTx: Transaction = {
       ...updatedTx,
       category: normalizeBusinessCategory(updatedTx.category, updatedTx.type, updatedTx.description),
     }
+
+    // If an existing receipt was removed or replaced, automatically delete the old receipt file from Supabase
+    if (oldTx && (oldTx.receiptPath || oldTx.receiptUrl)) {
+      const receiptRemoved = !normalizedTx.receiptUrl && !normalizedTx.receiptPath
+      const receiptChanged =
+        (normalizedTx.receiptPath && oldTx.receiptPath && normalizedTx.receiptPath !== oldTx.receiptPath) ||
+        (normalizedTx.receiptUrl && oldTx.receiptUrl && normalizedTx.receiptUrl !== oldTx.receiptUrl)
+
+      if (receiptRemoved || receiptChanged) {
+        const pathToPrune = oldTx.receiptPath || oldTx.receiptUrl
+        if (pathToPrune) {
+          deleteReceiptFromCloud(pathToPrune).catch((err) =>
+            console.warn('Old receipt cleanup failed:', err)
+          )
+        }
+        if (oldTx.receiptPath && (oldTx.receiptPath.includes(':\\') || oldTx.receiptPath.startsWith('\\') || oldTx.receiptPath.includes('receipts'))) {
+          fetch('/api/delete-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filePath: oldTx.receiptPath }),
+          }).catch(() => {})
+        }
+      }
+    }
+
     setTransactions((prev) => prev.map((t) => (t.id === normalizedTx.id ? normalizedTx : t)))
     addToast({
       type: 'success',
@@ -542,6 +569,23 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const deleteTransaction = async (id: string) => {
     const tx = transactions.find((t) => t.id === id)
+
+    // 1. Automatically delete attached receipt file from Supabase Storage and disk
+    if (tx?.receiptPath || tx?.receiptUrl) {
+      deleteReceiptFromCloud(tx.receiptPath || tx.receiptUrl).catch((err) =>
+        console.warn('Receipt cloud deletion warning:', err)
+      )
+
+      if (tx.receiptPath && (tx.receiptPath.includes(':\\') || tx.receiptPath.startsWith('\\') || tx.receiptPath.includes('receipts'))) {
+        fetch('/api/delete-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath: tx.receiptPath }),
+        }).catch(() => {})
+      }
+    }
+
+    // 2. Remove from local state
     setTransactions((prev) => prev.filter((t) => t.id !== id))
     addToast({
       type: 'info',
@@ -549,6 +593,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       message: tx ? tx.description : 'Transaction deleted',
     })
 
+    // 3. Remove row from Supabase database
     const client = getSupabase()
     if (client && supabaseStatus === 'connected') {
       try {

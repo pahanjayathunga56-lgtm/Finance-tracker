@@ -242,3 +242,47 @@ export const uploadReceiptToCloud = async (
     fileName,
   }
 }
+
+/**
+ * Automatically delete a receipt file from the Supabase Storage 'receipts' bucket.
+ * Accepts either the relative storage path (e.g. "Business/2026/10/file.png")
+ * or the full public Supabase URL.
+ */
+export const deleteReceiptFromCloud = async (pathOrUrl?: string): Promise<boolean> => {
+  if (!pathOrUrl) return false
+  const client = getSupabase()
+  if (!client) return false
+
+  try {
+    let cleanPath = pathOrUrl.trim()
+
+    // Skip if base64 data URL or local Windows absolute path (e.g. C:\...)
+    if (cleanPath.startsWith('data:') || cleanPath.includes(':\\') || cleanPath.startsWith('\\')) {
+      return false
+    }
+
+    // If it's a full URL containing /receipts/, extract bucket-relative path
+    if (cleanPath.includes('/receipts/')) {
+      cleanPath = cleanPath.substring(cleanPath.indexOf('/receipts/') + '/receipts/'.length)
+    }
+
+    // Strip URL query parameters or hash
+    cleanPath = cleanPath.split('?')[0].split('#')[0]
+
+    // Decode URL-encoded characters (like %20 for spaces)
+    cleanPath = decodeURIComponent(cleanPath)
+
+    if (!cleanPath) return false
+
+    const { error } = await client.storage.from('receipts').remove([cleanPath])
+    if (error) {
+      console.warn('Supabase storage receipt delete warning:', error.message)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.warn('Failed to delete receipt from Supabase storage:', err)
+    return false
+  }
+}
+

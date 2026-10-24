@@ -143,6 +143,39 @@ function receiptStoragePlugin(): Plugin {
         res.statusCode = 405
         res.end()
       })
+
+      // 4. Delete receipt endpoint: POST /api/delete-receipt
+      server.middlewares.use('/api/delete-receipt', (req, res) => {
+        if (req.method === 'POST') {
+          let body = ''
+          req.on('data', (chunk) => {
+            body += chunk
+          })
+          req.on('end', () => {
+            try {
+              const { filePath } = JSON.parse(body)
+              const cleanPath = path.resolve(filePath || '')
+              const receiptsBase = path.resolve(process.cwd(), 'receipts')
+              if (cleanPath && cleanPath.startsWith(receiptsBase) && fs.existsSync(cleanPath)) {
+                fs.unlinkSync(cleanPath)
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ success: true }))
+                return
+              }
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ success: false, message: 'File not found or outside receipts base' }))
+            } catch (err: any) {
+              res.statusCode = 500
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ success: false, error: err.message }))
+            }
+          })
+          return
+        }
+
+        res.statusCode = 405
+        res.end()
+      })
     },
   }
 }
