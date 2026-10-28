@@ -49,7 +49,7 @@ interface FinanceContextType {
   addUpcomingItem: (item: Omit<UpcomingItem, 'id'>) => void
   updateUpcomingItem: (item: UpcomingItem) => void
   deleteUpcomingItem: (id: string) => void
-  markUpcomingCleared: (id: string, convertToTransaction?: boolean) => void
+  markUpcomingCleared: (id: string, convertToTransaction?: boolean) => Promise<void> | void
 
   // Persistence & Data Management
   exportData: () => AppDataBackup
@@ -109,89 +109,15 @@ const DEFAULT_SETTINGS: UserSettings = {
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined)
 
-// Helper filters to identify demo/placeholder entries
-const isPlaceholderTransaction = (tx: Transaction): boolean => {
-  if (!tx) return true
-  // Mock IDs from demo datasets: tx-1, tx-2, ..., tx-12
-  if (/^tx-[0-9]{1,2}$/.test(tx.id)) return true
-  const sampleKeywords = [
-    'Boutique Store Retail Orders',
-    'Raw Fabric & Cotton Nursery',
-    'Koombiyo Weekly COD Remittance',
-    'Wholesale Baby Care Gift Box',
-    'Warehouse & Studio Monthly Rent',
-    'Staff Tailoring & Packing Fortnightly',
-    'Meta & Instagram Ads Promotion',
-    'Custom Corrugated Boxes & Poly',
-    'CEB Commercial Power & Water',
-    'Commercial Bank Payment Gateway',
-    'Prompt Xpress Courier Delivery',
-    'Delivery Van Fuel & Servicing',
-    'Keells Supermarket',
-    'Client Web App',
-    'Espresso & Artisan Cafe',
-    'Monthly Apartment Rent',
-    'Monthly Senior Software Engineer',
-    'CEB Electricity & SLT Fiber',
-    'Colombo Stock Exchange',
-    'Ceypetco Fuel',
-    'Dinner at Ministry of Crab',
-    'Ergonomic Desk & Mechanical',
-    'Digital Product Template Sales',
-    'Asiri Hospital Health Checkup',
-  ]
-  return sampleKeywords.some((kw) => tx.description.toLowerCase().includes(kw.toLowerCase()))
-}
-
-const isPlaceholderSubscription = (sub: Subscription): boolean => {
-  if (!sub) return true
-  if (/^sub-[0-9]{1,2}$/.test(sub.id)) return true
-  const sampleKeywords = [
-    'Shopify Advanced',
-    'Meta Ads Manager',
-    'Accounting & Invoicing',
-    'SLT Commercial',
-    'Annual Trademark',
-    'Bulk SMS',
-    'Netflix',
-    'Spotify',
-    'AWS Cloud',
-    'GitHub Copilot',
-    'Gym',
-    'ChatGPT Plus',
-  ]
-  return sampleKeywords.some((kw) => sub.name.toLowerCase().includes(kw.toLowerCase()))
-}
-
-const isPlaceholderUpcoming = (up: UpcomingItem): boolean => {
-  if (!up) return true
-  if (/^up-[0-9]{1,2}$/.test(up.id)) return true
-  const sampleKeywords = [
-    'Weekly Courier COD',
-    'Cotton & Linen Fabric',
-    'Monthly Warehouse & Studio',
-    'Wholesale Baby Boutique',
-    'CEB Showroom',
-    'Staff Mid-Month Payroll',
-    'Client Consulting Retainer',
-    'CEB Electricity',
-    'Apartment Monthly Rent',
-    'Mid-Month Corporate Consignment',
-  ]
-  return sampleKeywords.some((kw) => up.title.toLowerCase().includes(kw.toLowerCase()))
-}
-
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // State initialization with localStorage fallback - starts fresh with 0 placeholders
+  // State initialization with localStorage fallback
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS)
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed)) {
-          // Filter out placeholder transactions so the user starts fresh
-          const userOnly = (parsed as Transaction[]).filter((tx) => !isPlaceholderTransaction(tx))
-          return userOnly.map((tx) => ({
+          return (parsed as Transaction[]).map((tx) => ({
             ...tx,
             category: normalizeBusinessCategory(tx.category, tx.type, tx.description),
           }))
@@ -209,8 +135,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed)) {
-          const userOnly = (parsed as Subscription[]).filter((sub) => !isPlaceholderSubscription(sub))
-          return userOnly.map((sub) => ({
+          return (parsed as Subscription[]).map((sub) => ({
             ...sub,
             category: normalizeBusinessCategory(sub.category, 'expense', sub.name),
           }))
@@ -228,8 +153,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed)) {
-          const userOnly = (parsed as UpcomingItem[]).filter((item) => !isPlaceholderUpcoming(item))
-          return userOnly.map((item) => ({
+          return (parsed as UpcomingItem[]).map((item) => ({
             ...item,
             category: normalizeBusinessCategory(item.category, item.type, item.title),
           }))
@@ -762,15 +686,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }
 
-  const markUpcomingCleared = (id: string, convertToTransaction = false) => {
+  const markUpcomingCleared = async (id: string, convertToTransaction = false) => {
     const item = upcomingItems.find((i) => i.id === id)
     if (!item) return
 
     let createdTxId: string | undefined
+    let newTx: Transaction | undefined
 
     if (convertToTransaction) {
       createdTxId = 'tx-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6)
-      const newTx: Transaction = {
+      newTx = {
         id: createdTxId,
         date: new Date().toISOString().split('T')[0],
         description: item.title,
@@ -779,20 +704,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         category: normalizeBusinessCategory(item.category, item.type, item.title),
         notes: item.notes ? `Converted from upcoming: ${item.notes}` : 'Converted from scheduled item',
       }
-      setTransactions((prev) => [newTx, ...prev])
+      setTransactions((prev) => [newTx!, ...prev])
+    }
+
+    const updatedItem: UpcomingItem = {
+      ...item,
+      status: 'cleared',
+      convertedTransactionId: createdTxId || item.convertedTransactionId,
     }
 
     setUpcomingItems((prev) =>
-      prev.map((i) => {
-        if (i.id === id) {
-          return {
-            ...i,
-            status: 'cleared',
-            convertedTransactionId: createdTxId || i.convertedTransactionId,
-          }
-        }
-        return i
-      })
+      prev.map((i) => (i.id === id ? updatedItem : i))
     )
 
     addToast({
@@ -802,6 +724,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         ? `Added to Transactions as ${item.type}: ${currencySymbol}${item.amount.toFixed(2)}`
         : `${item.title} marked as completed`,
     })
+
+    const client = getSupabase()
+    if (client && supabaseStatus === 'connected') {
+      try {
+        const row = upcomingToRow(updatedItem)
+        const { data, error: updateErr } = await client
+          .from('upcoming_items')
+          .update(row)
+          .eq('id', id)
+          .select('id')
+
+        if (updateErr) {
+          console.error('Supabase upcoming item update failed:', updateErr)
+        } else if (!data || data.length === 0) {
+          await client.from('upcoming_items').upsert(row)
+        }
+
+        if (convertToTransaction && newTx) {
+          const { error: txErr } = await client
+            .from('transactions')
+            .insert(transactionToRow(newTx))
+          if (txErr) {
+            console.error('Supabase transaction insert failed:', txErr)
+          }
+        }
+      } catch (e) {
+        console.error('Supabase upcoming item clear/convert failed:', e)
+      }
+    }
   }
 
   // Backup & Restore
